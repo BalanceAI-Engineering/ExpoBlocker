@@ -53,7 +53,8 @@ export interface AppUsageStat {
   usageTimeFormatted: string;
 }
 
-// Epoch milliseconds the screen turned on and off.
+// Epoch millisecond bounds of a screen-on period; one still on ends at the
+// query's end or now.
 export interface ScreenSession {
   start: number;
   end: number;
