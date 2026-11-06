@@ -16,6 +16,7 @@ import android.provider.Settings
 import android.telecom.TelecomManager
 import android.util.Base64
 import expo.modules.appblockerengine.blocker.model.AppUsageStats
+import expo.modules.appblockerengine.blocker.model.ScreenSession
 import java.io.ByteArrayOutputStream
 
 class AppMonitor(private val context: Context) {
@@ -271,5 +272,47 @@ class AppMonitor(private val context: Context) {
         )
         
         return usageStatsList.find { it.packageName == packageName }?.totalTimeInForeground ?: 0
+    }
+
+    // Periods the screen was on, from the screen on/off events (API 28+; null
+    // below). The system keeps roughly ten days of events.
+    fun getScreenSessions(startMillis: Long, endMillis: Long): List<ScreenSession>? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+            return null
+        }
+        if (!hasUsageStatsPermission()) {
+            return emptyList()
+        }
+
+        val sessions = mutableListOf<ScreenSession>()
+        var onSince: Long? = null
+        val events = usageStatsManager.queryEvents(startMillis, endMillis)
+        val event = UsageEvents.Event()
+        while (events.hasNextEvent()) {
+            events.getNextEvent(event)
+            when (event.eventType) {
+                // A second "on" without an "off" means the phone lost power
+                // with the screen on; restart rather than count the outage.
+                UsageEvents.Event.SCREEN_INTERACTIVE -> onSince = event.timeStamp
+                // An "off" with no "on" before it is dropped: near the end of
+                // the kept history, its start may be days earlier. Shutdown
+                // (Android 10+) ends a session the same way.
+                UsageEvents.Event.SCREEN_NON_INTERACTIVE,
+                UsageEvents.Event.DEVICE_SHUTDOWN -> {
+                    val start = onSince
+                    if (start != null && event.timeStamp > start) {
+                        sessions += ScreenSession(start, event.timeStamp)
+                    }
+                    onSince = null
+                }
+            }
+        }
+
+        val stillOn = onSince
+        val end = minOf(endMillis, System.currentTimeMillis())
+        if (stillOn != null && end > stillOn) {
+            sessions += ScreenSession(stillOn, end)
+        }
+        return sessions
     }
 }
